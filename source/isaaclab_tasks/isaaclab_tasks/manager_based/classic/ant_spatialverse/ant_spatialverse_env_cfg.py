@@ -6,6 +6,12 @@
 import importlib
 import math
 
+from isaaclab_assets.robots.ant import ANT_CFG  # isort: skip
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+
+import isaaclab_tasks.manager_based.classic.humanoid.mdp as mdp
+
+
 ant_env_cfg_module = importlib.import_module("isaaclab_tasks.manager_based.classic.ant.ant_env_cfg")
 AntEnvCfg = ant_env_cfg_module.AntEnvCfg
 MySceneCfg = ant_env_cfg_module.MySceneCfg
@@ -20,11 +26,23 @@ SAGE_3D_ROOT = "/ssd5/datasets/SAGE-3D_Collision_Mesh"
 SAGE_COLLISION_USD_PATH = f"{SAGE_3D_ROOT}/Collision_Mesh/{SCENE_ID}/{SCENE_ID}_collision.usd"
 
 # Task 2 evidence-calibrated indoor pilot constants (hardcoded by design for Task 7 semantics).
-CALIBRATED_SPAWN_CENTER_XYZ = (8.01101544463955, -2.4156854790478897, 0.31)
-CALIBRATED_TARGET_XYZ = (1.0851768453127328, -2.8194426832665025, 0.31)
+CALIBRATED_SPAWN_CENTER_XYZ = (6.5, -2.0, 0.31)
+CALIBRATED_TARGET_XYZ = (-1.0, -1.0, 0.31)
 SPAWN_JITTER_XY_M = 0.25
 SPAWN_YAW_DEG = 10.0
 STOCK_ANT_INIT_Z_M = 0.5
+
+robot_scale = 0.2
+
+
+@configclass
+class TerminationsCfg:
+    """Termination terms for the MDP."""
+
+    # (1) Terminate if the episode length is exceeded
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    # (2) Terminate if the robot falls
+    torso_height = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": 0.31 * robot_scale})
 
 
 @configclass
@@ -37,10 +55,16 @@ class SpatialVerse839920SceneCfg(MySceneCfg):
         debug_vis=False,
     )
 
+    robot = ANT_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        spawn=ANT_CFG.spawn.replace(scale=(robot_scale, robot_scale, robot_scale)),
+    )
+
 
 @configclass
 class AntSpatialVerse839920EnvCfg(AntEnvCfg):
     scene: MySceneCfg = SpatialVerse839920SceneCfg(num_envs=1, env_spacing=1, clone_in_fabric=True)
+    terminations: TerminationsCfg = TerminationsCfg()
 
     def __post_init__(self):
         super().__post_init__()
