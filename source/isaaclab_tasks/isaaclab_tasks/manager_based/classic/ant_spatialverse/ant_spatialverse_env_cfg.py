@@ -28,7 +28,8 @@ SAGE_COLLISION_USD_PATH = f"{SAGE_3D_ROOT}/Collision_Mesh/{SCENE_ID}/{SCENE_ID}_
 # Task 2 evidence-calibrated indoor pilot constants (hardcoded by design for Task 7 semantics).
 CALIBRATED_SPAWN_CENTER_XYZ = (6.5, -2.0, 0.31)
 CALIBRATED_TARGET_XYZ = (-1.0, -1.0, 0.31)
-SPAWN_JITTER_XY_M = 0.25
+SPAWN_JITTER_X_M = 0.1
+SPAWN_JITTER_Y_M = 1
 SPAWN_YAW_DEG = 10.0
 STOCK_ANT_INIT_Z_M = 0.5
 
@@ -63,7 +64,7 @@ class SpatialVerse839920SceneCfg(MySceneCfg):
 
 @configclass
 class AntSpatialVerse839920EnvCfg(AntEnvCfg):
-    scene: MySceneCfg = SpatialVerse839920SceneCfg(num_envs=1, env_spacing=1, clone_in_fabric=True)
+    scene: MySceneCfg = SpatialVerse839920SceneCfg(num_envs=1, env_spacing=0.1, clone_in_fabric=True)
     terminations: TerminationsCfg = TerminationsCfg()
 
     def __post_init__(self):
@@ -79,8 +80,8 @@ class AntSpatialVerse839920EnvCfg(AntEnvCfg):
         self.rewards.move_to_target.params["target_pos"] = CALIBRATED_TARGET_XYZ
 
         self.events.reset_base.params["pose_range"] = {
-            "x": (spawn_x - SPAWN_JITTER_XY_M, spawn_x + SPAWN_JITTER_XY_M),
-            "y": (spawn_y - SPAWN_JITTER_XY_M, spawn_y + SPAWN_JITTER_XY_M),
+            "x": (spawn_x - SPAWN_JITTER_X_M, spawn_x + SPAWN_JITTER_X_M),
+            "y": (spawn_y - SPAWN_JITTER_Y_M, spawn_y + SPAWN_JITTER_Y_M),
             "z": (z_offset, z_offset),
             "yaw": (-yaw_jitter_rad, yaw_jitter_rad),
         }
