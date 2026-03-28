@@ -40,7 +40,7 @@ SPAWN_JITTER_Y_M = 1
 SPAWN_YAW_DEG = 10.0
 STOCK_ANT_INIT_Z_M = 0.5
 ROOT_FALL_MARGIN_M = 0.12
-LIDAR_COLLISION_THRESHOLD_M = 0.12
+LIDAR_COLLISION_THRESHOLD_M = 0.02  # Terminate if any ray hits an obstacle closer than this distance to the sensor (collision proxy).
 
 robot_scale = 0.2
 
@@ -206,19 +206,19 @@ class RewardsCfg:
     """Reward terms for the MDP."""
 
     # (1) Reward for moving toward target
-    progress = RewTerm(func=mdp.progress_reward, weight=1.0, params={"target_pos": CALIBRATED_TARGET_XYZ})
+    progress = RewTerm(func=mdp.progress_reward, weight=2.0, params={"target_pos": CALIBRATED_TARGET_XYZ})
     # (2) Stay alive bonus
     alive = RewTerm(func=mdp.is_alive, weight=0.5)
     # (3) Reward for upright posture
     upright = RewTerm(func=mdp.upright_posture_bonus, weight=0.1, params={"threshold": 0.93})
     # (4) Reward for moving in the right direction
     move_to_target = RewTerm(
-        func=mdp.move_to_target_bonus, weight=0.5, params={"threshold": 0.8, "target_pos": CALIBRATED_TARGET_XYZ}
+        func=mdp.move_to_target_bonus, weight=1.0, params={"threshold": 0.8, "target_pos": CALIBRATED_TARGET_XYZ}
     )
     # (5) Penalty for large action commands
-    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.005)
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.002)
     # (6) Penalty for energy consumption
-    energy = RewTerm(func=mdp.power_consumption, weight=-0.05, params={"gear_ratio": {".*": 15.0}})
+    energy = RewTerm(func=mdp.power_consumption, weight=-0.02, params={"gear_ratio": {".*": 15.0}})
     # (7) Penalty for reaching close to joint limits
     joint_pos_limits = RewTerm(
         func=mdp.joint_pos_limits_penalty_ratio, weight=-0.1, params={"threshold": 0.99, "gear_ratio": {".*": 15.0}}
