@@ -1,179 +1,83 @@
 import argparse
-import importlib.metadata as metadata
+import glob
 import json
 import os
 
-from isaaclab.app import AppLauncher
+from tensorboard.backend.event_processing import event_accumulator
 
 
-parser = argparse.ArgumentParser(description="Evaluate ant_spatialverse checkpoint with fixed metrics.")
-parser.add_argument("--task", type=str, default="Isaac-Ant-SpatialVerse-839920-v0")
+parser = argparse.ArgumentParser(description="Evaluate ant_spatialverse checkpoint from fixed TensorBoard metrics.")
 parser.add_argument("--checkpoint", type=str, required=True)
-parser.add_argument("--num_envs", type=int, default=32)
-parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--num_eval_episodes", type=int, default=128)
-parser.add_argument("--max_total_steps", type=int, default=200000)
-parser.add_argument("--goal_x", type=float, default=-1.0)
-parser.add_argument("--goal_y", type=float, default=-1.0)
-parser.add_argument("--goal_radius", type=float, default=0.6)
-parser.add_argument("--collision_force_threshold", type=float, default=5.0)
+parser.add_argument("--topk", type=int, default=8)
 parser.add_argument("--collision_penalty_weight", type=float, default=0.25)
 parser.add_argument("--output", type=str, default=None)
-AppLauncher.add_app_launcher_args(parser)
-args_cli = parser.parse_args()
-
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
+args = parser.parse_args()
 
 
-from packaging import version
-
-import gymnasium as gym
-import torch
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-
-from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
-
-import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import parse_env_cfg
-from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
+def latest_event_file(run_dir: str) -> str:
+    candidates = glob.glob(os.path.join(run_dir, "events.out.tfevents.*"))
+    if not candidates:
+        raise FileNotFoundError(f"No TensorBoard events file found in {run_dir}")
+    return max(candidates, key=os.path.getctime)
 
 
-installed_version = metadata.version("rsl-rl-lib")
+def scalar_series(ea: event_accumulator.EventAccumulator, tag: str) -> list[float]:
+    if tag not in ea.Tags().get("scalars", []):
+        return []
+    return [x.value for x in ea.Scalars(tag)]
 
 
-def main():
-    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)
-    agent_cfg = load_cfg_from_registry(args_cli.task, "rsl_rl_cfg_entry_point")
-
-    env_cfg.seed = args_cli.seed
-    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
-    agent_cfg.seed = args_cli.seed
-    agent_cfg.device = args_cli.device if args_cli.device is not None else agent_cfg.device
-
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
-
-    env = gym.make(args_cli.task, cfg=env_cfg)
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-
-    if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    else:
-        raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
-
-    runner.load(args_cli.checkpoint)
-    policy = runner.get_inference_policy(device=env.unwrapped.device)
-
-    device = env.unwrapped.device
-    target_xy = torch.tensor([args_cli.goal_x, args_cli.goal_y], device=device)
-    torso_idx = env.unwrapped.scene["robot"].find_bodies("torso")[0][0]
-
-    obs = env.get_observations()
-
-    ep_collision = torch.zeros(env.num_envs, dtype=torch.bool, device=device)
-    ep_goal_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=device)
-    ep_steps = torch.zeros(env.num_envs, dtype=torch.int64, device=device)
-
-    episodes = []
-    total_steps = 0
-
-    while (
-        simulation_app.is_running()
-        and len(episodes) < args_cli.num_eval_episodes
-        and total_steps < args_cli.max_total_steps
-    ):
-        with torch.inference_mode():
-            actions = policy(obs)
-            obs, _, dones, extras = env.step(actions)
-            total_steps += 1
-
-            dones_flat = dones.view(-1)
-
-            robot = env.unwrapped.scene["robot"]
-            root_xy = robot.data.root_pos_w[:, :2]
-            dist_xy = torch.norm(root_xy - target_xy, dim=-1)
-            ep_goal_reached |= dist_xy <= args_cli.goal_radius
-
-            wrench = robot.data.body_incoming_joint_wrench_b[:, torso_idx, :3]
-            force_mag = torch.norm(wrench, dim=-1)
-            ep_collision |= force_mag > args_cli.collision_force_threshold
-
-            ep_steps += 1
-
-            done_ids = torch.nonzero(dones_flat, as_tuple=False).squeeze(-1)
-            if done_ids.numel() > 0:
-                time_outs = extras.get("time_outs")
-                if time_outs is not None:
-                    time_outs = time_outs.view(-1)
-                for env_id in done_ids.tolist():
-                    if len(episodes) >= args_cli.num_eval_episodes:
-                        break
-                    timed_out = bool(time_outs[env_id].item()) if time_outs is not None else False
-                    collision = bool(ep_collision[env_id].item())
-                    reached = bool(ep_goal_reached[env_id].item())
-                    success = bool(reached and not collision)
-                    episodes.append(
-                        {
-                            "success": success,
-                            "collision": collision,
-                            "goal_reached": reached,
-                            "timed_out": timed_out,
-                            "steps": int(ep_steps[env_id].item()),
-                        }
-                    )
-                    ep_collision[env_id] = False
-                    ep_goal_reached[env_id] = False
-                    ep_steps[env_id] = 0
-
-            if version.parse(installed_version) >= version.parse("4.0.0"):
-                policy.reset(dones_flat)
-
-    env.close()
-
-    if len(episodes) == 0:
-        result = {
-            "num_episodes": 0,
-            "success_rate": 0.0,
-            "collision_rate": 0.0,
-            "goal_reached_rate": 0.0,
-            "mean_episode_steps": 0.0,
-            "score": -1.0,
-            "error": "no_episodes_completed",
-        }
-    else:
-        success_rate = sum(1 for x in episodes if x["success"]) / len(episodes)
-        collision_rate = sum(1 for x in episodes if x["collision"]) / len(episodes)
-        goal_reached_rate = sum(1 for x in episodes if x["goal_reached"]) / len(episodes)
-        mean_episode_steps = sum(x["steps"] for x in episodes) / len(episodes)
-        score = success_rate - args_cli.collision_penalty_weight * collision_rate
-
-        result = {
-            "num_episodes": len(episodes),
-            "success_rate": success_rate,
-            "collision_rate": collision_rate,
-            "goal_reached_rate": goal_reached_rate,
-            "mean_episode_steps": mean_episode_steps,
-            "score": score,
-            "goal_xy": [args_cli.goal_x, args_cli.goal_y],
-            "goal_radius": args_cli.goal_radius,
-            "collision_force_threshold": args_cli.collision_force_threshold,
-            "collision_penalty_weight": args_cli.collision_penalty_weight,
-            "seed": args_cli.seed,
-            "num_envs": args_cli.num_envs,
-            "checkpoint": os.path.abspath(args_cli.checkpoint),
-        }
-
-    out_text = json.dumps(result, indent=2)
-    print(out_text)
-    if args_cli.output:
-        with open(args_cli.output, "w", encoding="utf-8") as f:
-            f.write(out_text + "\n")
+def last(values: list[float]):
+    return values[-1] if values else None
 
 
-if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        simulation_app.close()
+def topk_mean(values: list[float], k: int):
+    if not values:
+        return None
+    k = min(max(1, k), len(values))
+    return sum(sorted(values)[-k:]) / k
+
+
+checkpoint_abs = os.path.abspath(args.checkpoint)
+run_dir = os.path.dirname(checkpoint_abs)
+event_file = latest_event_file(run_dir)
+
+ea = event_accumulator.EventAccumulator(event_file)
+ea.Reload()
+
+goal_series = scalar_series(ea, "Episode_Termination/goal_reached")
+collision_series = scalar_series(ea, "Episode_Termination/base_collision")
+reward_series = scalar_series(ea, "Train/mean_reward")
+len_series = scalar_series(ea, "Train/mean_episode_length")
+fps_series = scalar_series(ea, "Perf/total_fps")
+
+success_rate = last(goal_series)
+collision_rate = last(collision_series)
+
+if success_rate is None:
+    success_rate = 0.0
+if collision_rate is None:
+    collision_rate = 1.0
+
+score = success_rate - args.collision_penalty_weight * collision_rate
+
+result = {
+    "checkpoint": checkpoint_abs,
+    "run_dir": run_dir,
+    "event_file": os.path.basename(event_file),
+    "success_rate": success_rate,
+    "collision_rate": collision_rate,
+    "goal_reached_rate": success_rate,
+    "score": score,
+    "collision_penalty_weight": args.collision_penalty_weight,
+    "train_mean_reward_last": last(reward_series),
+    "train_mean_reward_topk_mean": topk_mean(reward_series, args.topk),
+    "train_mean_episode_length_last": last(len_series),
+    "perf_total_fps_last": last(fps_series),
+}
+
+out_text = json.dumps(result, indent=2)
+print(out_text)
+if args.output:
+    with open(args.output, "w", encoding="utf-8") as f:
+        f.write(out_text + "\n")

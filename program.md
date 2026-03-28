@@ -42,13 +42,9 @@ score = success_rate - 0.25 * collision_rate
 Evaluator command:
 
 ```bash
-./isaaclab.sh -p scripts/tools/evaluate_ant_spatialverse_checkpoint.py \
-  --task Isaac-Ant-SpatialVerse-839920-v0 \
+python scripts/tools/evaluate_ant_spatialverse_checkpoint.py \
   --checkpoint <checkpoint_path> \
-  --num_envs 32 \
-  --num_eval_episodes 128 \
-  --seed 42 \
-  --headless
+  --topk 8
 ```
 
 Secondary metrics (not selection criterion):
