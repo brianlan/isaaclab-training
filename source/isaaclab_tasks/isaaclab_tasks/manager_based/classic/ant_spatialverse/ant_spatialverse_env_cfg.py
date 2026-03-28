@@ -61,9 +61,9 @@ LIDAR_HORIZ_RES = 5  # degrees
 def torso_collision_terminated(env, asset_cfg: SceneEntityCfg, threshold: float = 5.0) -> torch.Tensor:
     """Terminate when the torso body experiences excessive wrench (collision with scene mesh).
 
-    Uses the articulation's body_incoming_joint_wrench_b data which includes
- external contact forces. This avoids the ContactSensor incompatibility with
- articulation links.
+       Uses the articulation's body_incoming_joint_wrench_b data which includes
+    external contact forces. This avoids the ContactSensor incompatibility with
+    articulation links.
     """
     asset = env.scene[asset_cfg.name]
     wrench = asset.data.body_incoming_joint_wrench_b[:, asset_cfg.body_ids]  # (N, B, 6)
@@ -80,6 +80,13 @@ def torso_collision_penalty(env, asset_cfg: SceneEntityCfg, threshold: float = 5
     wrench = asset.data.body_incoming_joint_wrench_b[:, asset_cfg.body_ids]  # (N, B, 6)
     force_mag = torch.norm(wrench[:, :, :3], dim=-1)  # (N, B)
     return torch.sum(force_mag > threshold, dim=1).float()
+
+
+def target_reached_terminated(env, target_pos: tuple[float, float, float], threshold: float = 0.6) -> torch.Tensor:
+    robot = env.scene["robot"]
+    target_xy = torch.tensor(target_pos[:2], device=env.device)
+    root_xy = robot.data.root_pos_w[:, :2]
+    return torch.norm(root_xy - target_xy, dim=-1) <= threshold
 
 
 ##
@@ -124,8 +131,8 @@ class SpatialVerse839920SceneCfg(MySceneCfg):
         spawn=ANT_CFG.spawn.replace(
             scale=(robot_scale, robot_scale, robot_scale),
             # activate_contact_sensors removed: Ant articulation links are not
-        # compatible with PhysX create_rigid_body_view used by ContactSensor.
-        # Collision detection is done via body_incoming_wrench instead.
+            # compatible with PhysX create_rigid_body_view used by ContactSensor.
+            # Collision detection is done via body_incoming_wrench instead.
         ),
     )
 
@@ -176,6 +183,13 @@ class TerminationsCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="torso"),
             "threshold": 5.0,
+        },
+    )
+    goal_reached = DoneTerm(
+        func=target_reached_terminated,
+        params={
+            "target_pos": CALIBRATED_TARGET_XYZ,
+            "threshold": 0.6,
         },
     )
 
