@@ -29,8 +29,6 @@ configclass = importlib.import_module("isaaclab.utils").configclass
 
 
 SCENE_ID = "839920"
-INTERIORGS_SCENE_DIR = "0001_839920"
-INTERIORGS_ROOT = "/ssd5/datasets/InteriorGS"
 SAGE_3D_ROOT = "/ssd5/datasets/SAGE-3D_Collision_Mesh"
 SAGE_COLLISION_USD_PATH = f"{SAGE_3D_ROOT}/Collision_Mesh/{SCENE_ID}/{SCENE_ID}_collision.usd"
 
@@ -41,6 +39,8 @@ SPAWN_JITTER_X_M = 0.1
 SPAWN_JITTER_Y_M = 1
 SPAWN_YAW_DEG = 10.0
 STOCK_ANT_INIT_Z_M = 0.5
+ROOT_FALL_MARGIN_M = 0.12
+LIDAR_COLLISION_THRESHOLD_M = 0.12
 
 robot_scale = 0.2
 
@@ -58,28 +58,37 @@ LIDAR_HORIZ_RES = 5  # degrees
 ##
 
 
-def torso_collision_terminated(env, asset_cfg: SceneEntityCfg, threshold: float = 5.0) -> torch.Tensor:
-    """Terminate when the torso body experiences excessive wrench (collision with scene mesh).
-
-       Uses the articulation's body_incoming_joint_wrench_b data which includes
-    external contact forces. This avoids the ContactSensor incompatibility with
-    articulation links.
-    """
-    asset = env.scene[asset_cfg.name]
-    wrench = asset.data.body_incoming_joint_wrench_b[:, asset_cfg.body_ids]  # (N, B, 6)
-    force_mag = torch.norm(wrench[:, :, :3], dim=-1)  # (N, B)
-    return torch.any(force_mag > threshold, dim=1)
+def root_height_below_spawn_margin(env, margin_m: float = ROOT_FALL_MARGIN_M) -> torch.Tensor:
+    """Terminate when the root drops significantly below calibrated spawn height."""
+    robot = env.scene["robot"]
+    min_height = CALIBRATED_SPAWN_CENTER_XYZ[2] - margin_m
+    return robot.data.root_pos_w[:, 2] < min_height
 
 
-def torso_collision_penalty(env, asset_cfg: SceneEntityCfg, threshold: float = 5.0) -> torch.Tensor:
-    """Penalize torso collision based on incoming wrench magnitude.
+def lidar_collision_terminated(env, sensor_cfg: SceneEntityCfg, threshold_m: float = LIDAR_COLLISION_THRESHOLD_M):
+    """Terminate when any LiDAR ray reports a near obstacle (collision proxy)."""
+    sensor = env.scene.sensors[sensor_cfg.name]
+    hit_positions = sensor.data.ray_hits_w
+    sensor_pos = sensor.data.pos_w.unsqueeze(1)
+    distances = torch.norm(hit_positions - sensor_pos, dim=-1)
+    distances = torch.nan_to_num(distances, nan=DEPTH_MAX_DIST, posinf=DEPTH_MAX_DIST, neginf=0.0)
+    return torch.any(distances < threshold_m, dim=1)
 
-    Uses the articulation's body_incoming_joint_wrench_b data.
-    """
-    asset = env.scene[asset_cfg.name]
-    wrench = asset.data.body_incoming_joint_wrench_b[:, asset_cfg.body_ids]  # (N, B, 6)
-    force_mag = torch.norm(wrench[:, :, :3], dim=-1)  # (N, B)
-    return torch.sum(force_mag > threshold, dim=1).float()
+
+def lidar_proximity_penalty(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    near_dist_m: float = 0.35,
+    max_dist: float = DEPTH_MAX_DIST,
+) -> torch.Tensor:
+    """Penalize proximity to obstacles using LiDAR distances."""
+    sensor = env.scene.sensors[sensor_cfg.name]
+    hit_positions = sensor.data.ray_hits_w
+    sensor_pos = sensor.data.pos_w.unsqueeze(1)
+    distances = torch.norm(hit_positions - sensor_pos, dim=-1)
+    distances = torch.nan_to_num(distances, nan=max_dist, posinf=max_dist, neginf=0.0)
+    # Linear penalty in [0, 1] for rays closer than near_dist_m.
+    return torch.mean(torch.clamp((near_dist_m - distances) / near_dist_m, min=0.0), dim=1)
 
 
 def target_reached_terminated(env, target_pos: tuple[float, float, float], threshold: float = 0.6) -> torch.Tensor:
@@ -151,7 +160,7 @@ class SpatialVerse839920SceneCfg(MySceneCfg):
         ),
         mesh_prim_paths=[
             MultiMeshRayCasterCfg.RaycastTargetCfg(
-                prim_expr="/World/ground/terrain/.*",
+                prim_expr="/World/ground/terrain",
                 is_shared=True,  # Same mesh across all envs
                 merge_prim_meshes=True,  # Merge all meshes
                 track_mesh_transforms=False,  # Static mesh, no need to track
@@ -174,15 +183,13 @@ class TerminationsCfg:
     # (1) Terminate if the episode length is exceeded
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     # (2) Terminate if the robot falls
-    torso_height = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": 0.31 * robot_scale})
-    # (3) Terminate if the robot's torso collides with the scene mesh.
-    #     Uses body_incoming_joint_wrench_b instead of ContactSensor because
-    #     Ant's articulation links are incompatible with PhysX create_rigid_body_view.
+    torso_height = DoneTerm(func=root_height_below_spawn_margin, params={"margin_m": ROOT_FALL_MARGIN_M})
+    # (3) Terminate when LiDAR indicates immediate obstacle proximity (collision proxy).
     base_collision = DoneTerm(
-        func=torso_collision_terminated,
+        func=lidar_collision_terminated,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="torso"),
-            "threshold": 5.0,
+            "sensor_cfg": SceneEntityCfg("depth_scanner"),
+            "threshold_m": LIDAR_COLLISION_THRESHOLD_M,
         },
     )
     goal_reached = DoneTerm(
@@ -216,13 +223,14 @@ class RewardsCfg:
     joint_pos_limits = RewTerm(
         func=mdp.joint_pos_limits_penalty_ratio, weight=-0.1, params={"threshold": 0.99, "gear_ratio": {".*": 15.0}}
     )
-    # (8) Penalty for torso collision with scene mesh (uses wrench, not ContactSensor)
+    # (8) Penalty for obstacle proximity from LiDAR depth.
     collision_penalty = RewTerm(
-        func=torso_collision_penalty,
-        weight=-2.0,
+        func=lidar_proximity_penalty,
+        weight=-1.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="torso"),
-            "threshold": 5.0,
+            "sensor_cfg": SceneEntityCfg("depth_scanner"),
+            "near_dist_m": 0.35,
+            "max_dist": DEPTH_MAX_DIST,
         },
     )
 
@@ -275,7 +283,7 @@ class ObservationsCfg:
 
 @configclass
 class AntSpatialVerse839920EnvCfg(AntEnvCfg):
-    scene: MySceneCfg = SpatialVerse839920SceneCfg(num_envs=1, env_spacing=0.1, clone_in_fabric=True)
+    scene: MySceneCfg = SpatialVerse839920SceneCfg(num_envs=256, env_spacing=0.1, clone_in_fabric=False)
     observations: ObservationsCfg = ObservationsCfg()
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
