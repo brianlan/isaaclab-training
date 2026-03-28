@@ -5,7 +5,7 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg
 
 from isaaclab_tasks.manager_based.classic.ant.agents.rsl_rl_ppo_cfg import AntPPORunnerCfg
 
@@ -13,11 +13,11 @@ from isaaclab_tasks.manager_based.classic.ant.agents.rsl_rl_ppo_cfg import AntPP
 @configclass
 class AntSpatialVerse839920PPORunnerCfg(AntPPORunnerCfg):
     experiment_name = "ant_spatialverse_839920"
-    policy = AntPPORunnerCfg.policy.__class__(
-        init_noise_std=AntPPORunnerCfg.policy.init_noise_std,
-        actor_obs_normalization=AntPPORunnerCfg.policy.actor_obs_normalization,
-        critic_obs_normalization=AntPPORunnerCfg.policy.critic_obs_normalization,
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
-        activation=AntPPORunnerCfg.policy.activation,
+        activation="elu",
     )
