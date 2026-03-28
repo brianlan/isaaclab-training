@@ -89,6 +89,8 @@ def main():
             obs, _, dones, extras = env.step(actions)
             total_steps += 1
 
+            dones_flat = dones.view(-1)
+
             robot = env.unwrapped.scene["robot"]
             root_xy = robot.data.root_pos_w[:, :2]
             dist_xy = torch.norm(root_xy - target_xy, dim=-1)
@@ -100,9 +102,11 @@ def main():
 
             ep_steps += 1
 
-            done_ids = torch.nonzero(dones, as_tuple=False).squeeze(-1)
+            done_ids = torch.nonzero(dones_flat, as_tuple=False).squeeze(-1)
             if done_ids.numel() > 0:
                 time_outs = extras.get("time_outs")
+                if time_outs is not None:
+                    time_outs = time_outs.view(-1)
                 for env_id in done_ids.tolist():
                     if len(episodes) >= args_cli.num_eval_episodes:
                         break
@@ -124,7 +128,7 @@ def main():
                     ep_steps[env_id] = 0
 
             if version.parse(installed_version) >= version.parse("4.0.0"):
-                policy.reset(dones)
+                policy.reset(dones_flat)
 
     env.close()
 
