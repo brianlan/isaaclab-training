@@ -33,8 +33,8 @@ SAGE_3D_ROOT = "/ssd5/datasets/SAGE-3D_Collision_Mesh"
 SAGE_COLLISION_USD_PATH = f"{SAGE_3D_ROOT}/Collision_Mesh/{SCENE_ID}/{SCENE_ID}_collision.usd"
 
 # Task 2 evidence-calibrated indoor pilot constants (hardcoded by design for Task 7 semantics).
-CALIBRATED_SPAWN_CENTER_XYZ = (6.5, -2.0, 0.31)
-CALIBRATED_TARGET_XYZ = (-1.0, -1.0, 0.31)
+CALIBRATED_SPAWN_CENTER_XYZ = (6.5, -2.0, 0.14)
+CALIBRATED_TARGET_XYZ = (-1.0, -1.0, 0.14)
 SPAWN_JITTER_X_M = 0.1
 SPAWN_JITTER_Y_M = 1
 SPAWN_YAW_DEG = 10.0
