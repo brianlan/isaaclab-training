@@ -1,6 +1,6 @@
-# ant_spatialverse_rl_autoresearch (robust mode v2)
+# ant_spatialverse_rl_autoresearch (rollout metric mode v3)
 
-Autonomous optimization loop for `Isaac-Ant-SpatialVerse-839920-v0` using a fixed evaluator, deterministic run contract, and safe keep/discard semantics.
+Autonomous optimization loop for `Isaac-Ant-SpatialVerse-839920-v0` using deterministic training and rollout-based checkpoint evaluation.
 
 ## Setup
 
@@ -11,8 +11,8 @@ Autonomous optimization loop for `Isaac-Ant-SpatialVerse-839920-v0` using a fixe
    - `source/isaaclab_tasks/isaaclab_tasks/manager_based/classic/ant_spatialverse/agents/rsl_rl_ppo_cfg.py` (editable)
    - `source/isaaclab_tasks/isaaclab_tasks/manager_based/classic/ant_spatialverse/ant_spatialverse_env_cfg.py` (read-only during tuning loop)
    - `scripts/tools/check_ant_spatialverse_scene.py` (preflight)
-   - `scripts/tools/evaluate_ant_spatialverse_checkpoint.py` (fixed evaluator)
-   - `scripts/tools/extract_ant_spatialverse_run_metrics.py` (structured metrics)
+   - `scripts/tools/evaluate_ant_spatialverse_checkpoint.py` (fixed rollout evaluator)
+   - `scripts/tools/extract_ant_spatialverse_run_metrics.py` (training diagnostics only)
 4. Ensure preflight passes:
    ```bash
    CONDA_PREFIX=/ssd4/envs/isaac_sim_py311 PATH=/ssd4/envs/isaac_sim_py311/bin:$PATH \
@@ -20,9 +20,9 @@ Autonomous optimization loop for `Isaac-Ant-SpatialVerse-839920-v0` using a fixe
    ```
 5. Create `results.tsv` with this header:
    ```tsv
-   commit\tscore\tsuccess_rate\tcollision_rate\tgoal_reached_rate\ttrain_mean_reward\tmean_episode_length\tfps\tstatus\trun_dir\tdescription
+   commit	score	success_rate	collision_rate	timeout_rate	mean_episode_length	mean_episode_return	train_mean_reward	train_mean_episode_length	fps	status	run_dir	checkpoint	description
    ```
-6. Keep `results.tsv`, `run.log`, and generated run artifacts uncommitted.
+6. Keep `results.tsv`, `run.log`, `eval.log`, and generated run artifacts uncommitted.
 
 ## Scope and boundaries
 
@@ -40,28 +40,50 @@ Autonomous optimization loop for `Isaac-Ant-SpatialVerse-839920-v0` using a fixe
 Primary score (higher is better):
 
 ```text
-score = success_rate - 0.25 * collision_rate
+score = success_rate - 0.5 * collision_rate - 0.1 * timeout_rate
 ```
 
-Evaluator command:
+Inner-loop evaluator command (used every trial):
 
 ```bash
-/ssd4/envs/isaac_sim_py311/bin/python scripts/tools/evaluate_ant_spatialverse_checkpoint.py \
+CONDA_PREFIX=/ssd4/envs/isaac_sim_py311 PATH=/ssd4/envs/isaac_sim_py311/bin:$PATH \
+./isaaclab.sh -p scripts/tools/evaluate_ant_spatialverse_checkpoint.py \
+  --task Isaac-Ant-SpatialVerse-839920-v0 \
   --checkpoint <checkpoint_path> \
-  --topk 8
+  --headless \
+  --num_envs 8 \
+  --num_episodes 32 \
+  --eval_seeds 42,43
 ```
 
-Important evaluator semantics:
-- This evaluator reads TensorBoard scalars from the run directory that contains the checkpoint.
-- It does **not** execute policy rollout from checkpoint weights.
-- Therefore, the optimization target is a run-level proxy metric, not true checkpoint inference quality.
+Full-evaluation command (run only for promising candidates, e.g. inner-loop score improvement >= 0.01):
 
-Secondary metrics (for diagnosis only, not selection criterion):
+```bash
+CONDA_PREFIX=/ssd4/envs/isaac_sim_py311 PATH=/ssd4/envs/isaac_sim_py311/bin:$PATH \
+./isaaclab.sh -p scripts/tools/evaluate_ant_spatialverse_checkpoint.py \
+  --task Isaac-Ant-SpatialVerse-839920-v0 \
+  --checkpoint <checkpoint_path> \
+  --headless \
+  --num_envs 8 \
+  --num_episodes 128 \
+  --eval_seeds 42,43,44
+```
+
+Evaluator outputs required fields:
+- `score`
+- `success_rate`
+- `collision_rate`
+- `timeout_rate`
+- `mean_episode_length`
+- `mean_episode_return`
+- `collected_episodes`
+
+Secondary diagnostics (not primary selection criterion):
 - `Train/mean_reward`
 - `Train/mean_episode_length`
 - `Perf/total_fps`
 
-Extract command:
+Diagnostics extraction command:
 
 ```bash
 /ssd4/envs/isaac_sim_py311/bin/python scripts/tools/extract_ant_spatialverse_run_metrics.py --log_dir <run_log_dir>
@@ -72,7 +94,7 @@ Extract command:
 Every experiment must use:
 - `--task Isaac-Ant-SpatialVerse-839920-v0`
 - `--num_envs 64`
-- `--max_iterations 100`
+- `--max_iterations 1000`
 - `--seed 42`
 - `--headless`
 
@@ -84,6 +106,17 @@ Operational invariants:
 Timeout policy:
 - Hard timeout: 20 minutes wall clock.
 - On timeout, kill the full process group and mark `crash_timeout`.
+
+## Keep/discard rule
+
+1. Accept if `score` strictly improves by at least `0.005`.
+2. If `|score_delta| < 0.005`, apply tie-breakers in order:
+   - higher `success_rate`
+   - lower `collision_rate`
+   - higher `mean_episode_return`
+   - higher `mean_episode_length` (only if collision does not increase)
+3. Reject if `collision_rate >= 0.98` unless `success_rate` improves by at least `0.05` over best.
+4. Reject if evaluator collected fewer than 90% of requested episodes.
 
 ## Safe keep/discard semantics
 
@@ -107,7 +140,7 @@ On non-improving run:
    ./isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/train.py \
      --task Isaac-Ant-SpatialVerse-839920-v0 \
      --num_envs 64 \
-     --max_iterations 100 \
+     --max_iterations 1000 \
      --seed 42 \
      --headless > run.log 2>&1
    ```
@@ -115,11 +148,11 @@ On non-improving run:
    - `[INFO] Logging experiment in directory:`
    - `Exact experiment name requested from command line:`
 6. Choose latest checkpoint in run (`model_*.pt`, highest iteration).
-7. Run fixed evaluator and capture JSON.
+7. Run rollout evaluator and capture JSON in `eval.log`.
 8. Run structured metric extraction and capture JSON.
 9. Append row to `results.tsv`.
-10. If score improves, keep commit and update best pointers.
-11. Else, rollback safely to best config state and mark `discard`.
+10. If accepted by rule, keep commit and update best pointers.
+11. Else rollback safely to best config state and mark `discard`.
 
 ## Crash handling
 
@@ -128,6 +161,7 @@ Mark as crash if any of the following:
 - Evaluator output missing required fields (`crash_eval_invalid`)
 - Training command non-zero exit (`crash_train_exit`)
 - Hard timeout reached (`crash_timeout`)
+- Rollout evaluator runtime error (`crash_eval_runtime`)
 
 Crash signature definition:
 - Signature = normalized tuple of `(status, first_exception_line_or_error_token)`

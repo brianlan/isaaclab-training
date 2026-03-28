@@ -40,7 +40,7 @@ SPAWN_JITTER_Y_M = 1
 SPAWN_YAW_DEG = 10.0
 STOCK_ANT_INIT_Z_M = 0.5
 ROOT_FALL_MARGIN_M = 0.12
-LIDAR_COLLISION_THRESHOLD_M = 0.02  # Terminate if any ray hits an obstacle closer than this distance to the sensor (collision proxy).
+LIDAR_COLLISION_THRESHOLD_M = 0.05  # Terminate if any ray hits an obstacle closer than this distance to the sensor (collision proxy).
 
 robot_scale = 0.2
 
@@ -216,9 +216,9 @@ class RewardsCfg:
         func=mdp.move_to_target_bonus, weight=1.0, params={"threshold": 0.8, "target_pos": CALIBRATED_TARGET_XYZ}
     )
     # (5) Penalty for large action commands
-    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.002)
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.004)
     # (6) Penalty for energy consumption
-    energy = RewTerm(func=mdp.power_consumption, weight=-0.02, params={"gear_ratio": {".*": 15.0}})
+    energy = RewTerm(func=mdp.power_consumption, weight=-0.035, params={"gear_ratio": {".*": 15.0}})
     # (7) Penalty for reaching close to joint limits
     joint_pos_limits = RewTerm(
         func=mdp.joint_pos_limits_penalty_ratio, weight=-0.1, params={"threshold": 0.99, "gear_ratio": {".*": 15.0}}
