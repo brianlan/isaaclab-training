@@ -14,7 +14,7 @@ from isaaclab_tasks.manager_based.classic.ant.agents.rsl_rl_ppo_cfg import AntPP
 class AntSpatialVerse839920PPORunnerCfg(AntPPORunnerCfg):
     experiment_name = "ant_spatialverse_839920"
     policy = RslRlPpoActorCriticCfg(
-        init_noise_std=0.5,
+        init_noise_std=0.3,
         actor_obs_normalization=False,
         critic_obs_normalization=False,
         actor_hidden_dims=[512, 256, 128],
