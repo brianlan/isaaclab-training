@@ -13,3 +13,6 @@ from isaaclab_tasks.manager_based.classic.ant.agents.rsl_rl_ppo_cfg import AntPP
 @configclass
 class AntSpatialVerse839920PPORunnerCfg(AntPPORunnerCfg):
     experiment_name = "ant_spatialverse_839920"
+    # NOTE: The observation space is now ~1214 dims (base ~62 + LiDAR depth_scan 1152).
+    #       Consider increasing network capacity if training plateaus, e.g.:
+    #       actor_hidden_dims=[512, 256, 128], critic_hidden_dims=[512, 256, 128]
