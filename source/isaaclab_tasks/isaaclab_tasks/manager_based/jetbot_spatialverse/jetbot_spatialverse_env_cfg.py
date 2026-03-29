@@ -6,6 +6,7 @@ import isaaclab.sim as sim_utils
 import isaaclab.envs.mdp as mdp
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.sim.spawners.materials import PreviewSurfaceCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -28,7 +29,7 @@ SAGE_3D_ROOT = "/ssd5/datasets/SAGE-3D_Collision_Mesh"
 SAGE_COLLISION_USD_PATH = f"{SAGE_3D_ROOT}/Collision_Mesh/{SCENE_ID}/{SCENE_ID}_collision.usd"
 
 CALIBRATED_SPAWN_CENTER_XYZ = (6.5, -2.0, 0.14)
-CALIBRATED_TARGET_XYZ = (-1.0, 0.2, 0.14)
+CALIBRATED_TARGET_XYZ = (-1.8, 0.0, 0.14)
 SPAWN_JITTER_X_M = 0.2
 SPAWN_JITTER_Y_M = 1.0
 SPAWN_YAW_DEG = 20.0
@@ -43,7 +44,10 @@ LIDAR_HORIZ_RES = 5
 
 
 JETBOT_CFG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/NVIDIA/Jetbot/jetbot.usd"),
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/NVIDIA/Jetbot/jetbot.usd",
+        visual_material=PreviewSurfaceCfg(diffuse_color=(0.3, 1.0, 0.3)),  # bright green
+    ),
     actuators={
         "wheel_acts": ImplicitActuatorCfg(
             joint_names_expr=[".*wheel.*"],
