@@ -213,7 +213,7 @@ class RewardsCfg:
     upright = RewTerm(func=mdp.upright_posture_bonus, weight=0.1, params={"threshold": 0.93})
     # (4) Reward for moving in the right direction
     move_to_target = RewTerm(
-        func=mdp.move_to_target_bonus, weight=1.0, params={"threshold": 0.8, "target_pos": CALIBRATED_TARGET_XYZ}
+        func=mdp.move_to_target_bonus, weight=0.3, params={"threshold": 0.8, "target_pos": CALIBRATED_TARGET_XYZ}
     )
     # (5) Penalty for large action commands
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.004)
