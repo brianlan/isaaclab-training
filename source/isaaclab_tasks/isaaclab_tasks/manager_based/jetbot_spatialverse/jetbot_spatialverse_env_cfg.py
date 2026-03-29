@@ -28,7 +28,7 @@ SAGE_3D_ROOT = "/ssd5/datasets/SAGE-3D_Collision_Mesh"
 SAGE_COLLISION_USD_PATH = f"{SAGE_3D_ROOT}/Collision_Mesh/{SCENE_ID}/{SCENE_ID}_collision.usd"
 
 CALIBRATED_SPAWN_CENTER_XYZ = (6.5, -2.0, 0.14)
-CALIBRATED_TARGET_XYZ = (-1.0, -1.0, 0.14)
+CALIBRATED_TARGET_XYZ = (-1.0, 0.2, 0.14)
 SPAWN_JITTER_X_M = 0.2
 SPAWN_JITTER_Y_M = 1.0
 SPAWN_YAW_DEG = 20.0
@@ -119,6 +119,17 @@ def obs_distance_to_target(env, target_pos: tuple[float, float, float]) -> torch
 def yaw_rate_l2(env) -> torch.Tensor:
     robot = env.scene["robot"]
     return torch.square(robot.data.root_ang_vel_w[:, 2])
+
+
+def minimum_velocity_penalty(env, min_speed: float = 0.1) -> torch.Tensor:
+    """Penalize when bot moves too slowly (below minimum speed threshold).
+
+    This encourages the bot to keep moving rather than staying still.
+    Returns 0 when speed >= min_speed, positive penalty when speed < min_speed.
+    """
+    robot = env.scene["robot"]
+    speed = torch.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
+    return torch.clamp(min_speed - speed, min=0.0)
 
 
 def target_reached_terminated(env, target_pos: tuple[float, float, float], threshold: float = 0.45) -> torch.Tensor:
@@ -307,7 +318,8 @@ class RewardsCfg:
     )
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.01)
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.02)
-    yaw_rate = RewTerm(func=yaw_rate_l2, weight=-0.05)
+    yaw_rate = RewTerm(func=yaw_rate_l2, weight=-0.04)
+    minimum_velocity = RewTerm(func=minimum_velocity_penalty, weight=-0.5, params={"min_speed": 0.1})
     collision_penalty = RewTerm(
         func=lidar_proximity_penalty,
         weight=-2.5,
