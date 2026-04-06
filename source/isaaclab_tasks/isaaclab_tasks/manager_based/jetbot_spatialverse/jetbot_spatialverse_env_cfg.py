@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import torch
 
@@ -25,8 +26,10 @@ from isaaclab.utils.math import quat_apply
 
 
 SCENE_ID = "839920"
-SAGE_3D_ROOT = "/ssd5/datasets/SAGE-3D_Collision_Mesh"
-SAGE_COLLISION_USD_PATH = f"{SAGE_3D_ROOT}/Collision_Mesh/{SCENE_ID}/{SCENE_ID}_collision.usd"
+SAGE_3D_ROOT_CANDIDATES = [
+    Path("/ssd5/datasets/SAGE-3D_Collision_Mesh"),
+    Path("/ssd5/datasets/SAGE3D/Collision_Mesh"),
+]
 
 CALIBRATED_SPAWN_CENTER_XYZ = (6.5, -2.0, 0.14)
 CALIBRATED_TARGET_XYZ = (-1.8, 0.0, 0.14)
@@ -43,9 +46,23 @@ LIDAR_HORIZ_FOV = (0, 360)
 LIDAR_HORIZ_RES = 5
 
 
+def resolve_collision_scene_path() -> str:
+    candidate_paths = [root / f"Collision_Mesh/{SCENE_ID}/{SCENE_ID}_collision.usd" for root in SAGE_3D_ROOT_CANDIDATES]
+    for candidate_path in candidate_paths:
+        if candidate_path.exists():
+            return str(candidate_path)
+    raise FileNotFoundError(
+        f"Could not locate collision USD for scene {SCENE_ID}. Checked: {[str(path) for path in candidate_paths]}"
+    )
+
+
+SAGE_COLLISION_USD_PATH = resolve_collision_scene_path()
+
+
 JETBOT_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/NVIDIA/Jetbot/jetbot.usd",
+        activate_contact_sensors=True,
         visual_material=PreviewSurfaceCfg(diffuse_color=(0.3, 1.0, 0.3)),  # bright green
     ),
     actuators={
@@ -142,6 +159,13 @@ def target_reached_terminated(env, target_pos: tuple[float, float, float], thres
 
 def goal_reached_reward(env, target_pos: tuple[float, float, float], threshold: float = 0.45) -> torch.Tensor:
     return target_reached_terminated(env, target_pos=target_pos, threshold=threshold).float()
+
+
+def set_global_prim_visibility(env, env_ids, prim_path: str, visible: bool) -> None:
+    prim = sim_utils.get_prim_at_path(prim_path)
+    if prim is None or not prim.IsValid():
+        raise ValueError(f"Could not resolve prim at path '{prim_path}' for visibility update.")
+    sim_utils.set_prim_visibility(prim, visible)
 
 
 def lidar_collision_terminated(env, sensor_cfg: SceneEntityCfg, threshold_m: float = LIDAR_COLLISION_THRESHOLD_M):
